@@ -2,6 +2,7 @@ use alloy_primitives::{Address, B256, FixedBytes};
 use anyhow::{Context, Result};
 use reqwest::Url;
 use serde::Serialize;
+use sp1_sdk::SP1VerifyingKey;
 use op_succinct_client_utils::types::AggregationOutputs;
 
 #[derive(Serialize)]
@@ -13,8 +14,7 @@ struct SubmitReq {
     l1_head: B256,
     aggregation_outputs: AggregationOutputs,
     l2_start_block: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tx_hash: Option<FixedBytes<32>>,
+    agg_vk: SP1VerifyingKey,
     #[serde(skip_serializing_if = "Option::is_none")]
     proof: Option<Vec<u8>>,
 }
@@ -49,7 +49,7 @@ pub async fn submit_to_publisher(
     l1_head: B256,
     aggregation_outputs: AggregationOutputs,
     l2_start_block: u64,
-    tx_hash: Option<FixedBytes<32>>,
+    agg_vk: &SP1VerifyingKey,
     proof_bytes: Option<&[u8]>,
 ) -> Result<()> {
     let client = reqwest::Client::new();
@@ -62,7 +62,7 @@ pub async fn submit_to_publisher(
         l1_head,
         aggregation_outputs,
         l2_start_block,
-        tx_hash,
+        agg_vk: agg_vk.clone(),
         proof: proof_bytes.map(|p| p.to_vec()),
     };
 

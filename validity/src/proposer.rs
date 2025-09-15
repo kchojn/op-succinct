@@ -921,6 +921,7 @@ where
     ///
     /// If the DGF address is set, use it to create a new validity dispute game that will resolve
     /// with the proof. Otherwise, propose the L2 output.
+    /// SSV: we do not submit on-chain; only to the Shared Publisher!!!
     async fn relay_aggregation_proof(
         &self,
         completed_agg_proof: &OPSuccinctRequest,
@@ -932,73 +933,7 @@ where
             .get_l2_output_at_block(completed_agg_proof.end_block as u64)
             .await?;
 
-        // If the DisputeGameFactory address is set, use it to create a new validity dispute game
-        // that will resolve with the proof. Note: In the DGF setting, the proof immediately
-        // resolves the game. Otherwise, propose the L2 output.
-        let receipt = if self.contract_config.dgf_address != Address::ZERO {
-            // Validity game type: https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/dispute/lib/Types.sol#L64.
-            const OP_SUCCINCT_VALIDITY_DISPUTE_GAME_TYPE: u32 = 6;
-
-            // Get the initialization bond for the validity dispute game.
-            let init_bond = self
-                .contract_config
-                .dgf_contract
-                .initBonds(OP_SUCCINCT_VALIDITY_DISPUTE_GAME_TYPE)
-                .call()
-                .await?;
-
-            let transaction_request = self
-                .contract_config
-                .l2oo_contract
-                .dgfProposeL2Output(
-                    self.requester_config.op_succinct_config_name_hash,
-                    output.output_root,
-                    U256::from(completed_agg_proof.end_block),
-                    U256::from(completed_agg_proof.checkpointed_l1_block_number.unwrap()),
-                    completed_agg_proof.proof.as_ref().unwrap().clone().into(),
-                    self.requester_config.prover_address,
-                )
-                .value(init_bond)
-                .into_transaction_request();
-
-            self.driver_config
-                .signer
-                .send_transaction_request(
-                    self.driver_config.fetcher.as_ref().rpc_config.l1_rpc.clone(),
-                    transaction_request,
-                )
-                .await?
-        } else {
-            // Propose the L2 output to the L2OutputOracle directly.
-            let transaction_request = self
-                .contract_config
-                .l2oo_contract
-                .proposeL2Output(
-                    self.requester_config.op_succinct_config_name_hash,
-                    output.output_root,
-                    U256::from(completed_agg_proof.end_block),
-                    U256::from(completed_agg_proof.checkpointed_l1_block_number.unwrap()),
-                    completed_agg_proof.proof.clone().unwrap().into(),
-                    self.requester_config.prover_address,
-                )
-                .into_transaction_request();
-
-            self.driver_config
-                .signer
-                .send_transaction_request(
-                    self.driver_config.fetcher.as_ref().rpc_config.l1_rpc.clone(),
-                    transaction_request,
-                )
-                .await?
-        };
-
-        // If the transaction reverted, log the error.
-        if !receipt.status() {
-            return Err(anyhow!("Transaction reverted: {:?}", receipt));
-        }
-
         if let Some(publisher_url) = &self.driver_config.publisher_url {
-            let tx_hash = receipt.transaction_hash();
             let start_block = completed_agg_proof.start_block as u64;
             let end_block = completed_agg_proof.end_block as u64;
 
@@ -1037,7 +972,7 @@ where
                 l1_head,
                 agg_outputs,
                 start_block,
-                Some(tx_hash),
+                &self.program_config.agg_vk,
                 completed_agg_proof.proof.as_deref(),
             )
             .await
@@ -1046,7 +981,6 @@ where
                     start_block,
                     end_block,
                     publisher = %publisher_url,
-                    tx_hash = ?tx_hash,
                     "Published aggregation outputs to shared publisher"
                 ),
                 Err(e) => warn!(
@@ -1057,8 +991,8 @@ where
                 ),
             }
         }
-
-        Ok(receipt.transaction_hash())
+        
+        Ok(B256::ZERO) // Placeholder return value since we're not submitting on-chain
     }
 
     /// Validate the requester config matches the contract.
